@@ -73,8 +73,8 @@ def process_data(data: str) -> None:
                 for i in range(period, len(chrono_data)):
                     # Calculate average of previous 'period' slopes (excluding current)
                     avg_without_current = chrono_data.loc[i-period:i-1, "ema_slope"].mean()
-                    # Calculate deviation from that average
-                    chrono_data.loc[i, "slope_deviation"] = round(chrono_data.loc[i, "ema_slope"] - avg_without_current, 2)
+                    # Calculate absolute deviation from that average
+                    chrono_data.loc[i, "slope_deviation"] = round(abs(chrono_data.loc[i, "ema_slope"] - avg_without_current), 2)
                 
                 # Fill NaN values with 0 for rows where we couldn't calculate
                 chrono_data["slope_deviation"] = chrono_data["slope_deviation"].fillna(0)
@@ -146,8 +146,8 @@ def calculate_ema_slope(data_list: pd.DataFrame, period: int = 8):
 
 def get_slope_deviation(data_list: pd.DataFrame) -> float:
     """
-    Get the most recent deviation of the EMA slope from the average of previous periods.
-    Returns how much the current trend angle deviates from the average trend.
+    Get the most recent absolute deviation of the EMA slope from the average of previous periods.
+    Returns the magnitude of deviation between the current trend angle and the average trend.
     """
     if len(data_list) < 2 or 'slope_deviation' not in data_list.columns:
         return 0.0
