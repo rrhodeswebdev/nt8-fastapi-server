@@ -3,6 +3,7 @@ from pydantic import BaseModel
 from typing import List
 import pandas as pd
 from ta.trend import EMAIndicator
+import math
 
 app = FastAPI(title="NT8 AI Server")
 
@@ -46,35 +47,53 @@ def process_data(data: str) -> None:
         if len(data_list) > 1000:
             data_list = data_list.iloc[-1000:]
         
-        # Sort the data and update EMA values
-        sorted_data = sort_data(data_list)
-        if len(sorted_data) > 8:  # Need minimum data for 8 EMA
-            # Calculate EMA for all data
-            ema_indicator = EMAIndicator(close=sorted_data["close"], window=8)
-            ema_values = ema_indicator.ema_indicator()
+        # For EMA calculation, we first need chronological order (oldest to newest)
+        chrono_data = data_list.sort_values(by="time", ascending=True).reset_index(drop=True)
+        
+        if len(chrono_data) > 8:  # Need minimum data for 8 EMA
+            # Calculate EMA for all data in chronological order
+            ema_indicator = EMAIndicator(close=chrono_data["close"], window=8)
+            chrono_data["ema_8"] = ema_indicator.ema_indicator()
             
-            # Add EMA values to the dataframe
-            sorted_data["ema_8"] = ema_values
+            # Calculate raw slope in chronological order (current minus previous)
+            raw_slope = chrono_data["ema_8"] - chrono_data["ema_8"].shift(1)
             
-            # Calculate slope values (current EMA minus previous EMA)
-            # With ascending=True sort, we use the previous value (earlier in time)
-            sorted_data["ema_slope"] = sorted_data["ema_8"] - sorted_data["ema_8"].shift(1)
+            # Convert slope to degrees: degrees = atan(slope) * (180/π)
+            chrono_data["ema_slope"] = raw_slope.apply(lambda x: round(math.degrees(math.atan(x)), 2) if pd.notnull(x) else 0)
             
-            # Fill NaN values in the first row where we can't calculate slope
-            sorted_data["ema_slope"] = sorted_data["ema_slope"].fillna(0)
+            # Calculate deviation from the average of slope values in a period (last 5 values)
+            # First, make sure we have enough data points
+            period = 8
+            if len(chrono_data) > period:
+                # Calculate rolling average of slope values
+                # We use min_periods=1 to handle the initial values where we don't have a full window yet
+                chrono_data["slope_avg"] = chrono_data["ema_slope"].rolling(window=period, min_periods=1).mean().round(2)
+                
+                # Calculate deviation of latest slope from the average (excluding the latest point)
+                for i in range(period, len(chrono_data)):
+                    # Calculate average of previous 'period' slopes (excluding current)
+                    avg_without_current = chrono_data.loc[i-period:i-1, "ema_slope"].mean()
+                    # Calculate deviation from that average
+                    chrono_data.loc[i, "slope_deviation"] = round(chrono_data.loc[i, "ema_slope"] - avg_without_current, 2)
+                
+                # Fill NaN values with 0 for rows where we couldn't calculate
+                chrono_data["slope_deviation"] = chrono_data["slope_deviation"].fillna(0)
+            else:
+                # Not enough data yet, set deviation to 0
+                chrono_data["slope_deviation"] = 0
             
-            # Update the global data_list with the sorted data including the new columns
-            data_list = sorted_data
+            # Sort back to descending order for displaying most recent first
+            data_list = chrono_data.sort_values(by="time", ascending=False).reset_index(drop=True)
 
 def sort_data(data_list: pd.DataFrame) -> pd.DataFrame:
-    # Sort DataFrame by time in descending order
-    return data_list.sort_values(by="time", ascending=True).reset_index(drop=True)
+    # Sort DataFrame by time in descending order (most current time first)
+    return data_list.sort_values(by="time", ascending=False).reset_index(drop=True)
 
 def determine_price_direction(data_list: pd.DataFrame) -> str:
     print(data_list)
     # Check if we have at least 2 items to compare
     if len(data_list) >= 2:
-        # Compare close values of first and second items
+        # With descending order, index 0 is the most recent, index 1 is the previous
         if data_list.iloc[0]["close"] > data_list.iloc[1]["close"]:
             return "up"
         elif data_list.iloc[0]["close"] < data_list.iloc[1]["close"]:
@@ -86,26 +105,55 @@ def determine_price_direction(data_list: pd.DataFrame) -> str:
 
 def calculate_ema_slope(data_list: pd.DataFrame, period: int = 8):
     """
-    Calculate the slope of the EMA for the given period and return the slope value and direction.
+    Calculate the slope of the EMA for the given period and return the slope value in degrees and direction.
     Returns:
-        tuple: (slope_value: float, direction: str)
+        tuple: (slope_in_degrees: float, direction: str)
     """
     if len(data_list) < period + 1:
         return 0.0, "not enough data"
-
-    # Calculate the EMA using TA library
-    ema_indicator = EMAIndicator(close=data_list["close"], window=period, fillna=True)
-    ema = ema_indicator.ema_indicator()
     
-    # Slope: difference between the last and previous EMA values
-    slope = ema.iloc[-1] - ema.iloc[-2]
-    if slope > 0:
-        direction = "up"
-    elif slope < 0:
-        direction = "down"
+    if "ema_slope" in data_list.columns:
+        # Slope is already calculated in the dataframe
+        slope_degrees = data_list["ema_slope"].iloc[0]  # Get the most recent slope value
+        if slope_degrees > 0:
+            direction = "up"
+        elif slope_degrees < 0:
+            direction = "down"
+        else:
+            direction = "neutral"
+        return slope_degrees, direction
     else:
-        direction = "neutral"
-    return slope, direction
+        # For EMA calculation, we need chronological order (oldest to newest)
+        temp_data = data_list.sort_values(by="time", ascending=True).reset_index(drop=True)
+        
+        # Calculate the EMA using TA library
+        ema_indicator = EMAIndicator(close=temp_data["close"], window=period, fillna=True)
+        ema = ema_indicator.ema_indicator()
+        
+        # Calculate raw slope
+        raw_slope = ema.iloc[-1] - ema.iloc[-2]
+        
+        # Convert to degrees: degrees = atan(slope) * (180/π)
+        slope_degrees = round(math.degrees(math.atan(raw_slope)), 2)
+        
+        if slope_degrees > 0:
+            direction = "up"
+        elif slope_degrees < 0:
+            direction = "down"
+        else:
+            direction = "neutral"
+        return slope_degrees, direction
+
+def get_slope_deviation(data_list: pd.DataFrame) -> float:
+    """
+    Get the most recent deviation of the EMA slope from the average of previous periods.
+    Returns how much the current trend angle deviates from the average trend.
+    """
+    if len(data_list) < 2 or 'slope_deviation' not in data_list.columns:
+        return 0.0
+    
+    # Get the most recent slope deviation
+    return data_list["slope_deviation"].iloc[0]
 
 @app.post("/")
 async def process_string(request: Request):
@@ -128,9 +176,10 @@ async def process_string(request: Request):
     sorted_data = sort_data(data_list)
     price_direction = determine_price_direction(sorted_data)
     ema_slope, ema_direction = calculate_ema_slope(sorted_data, period=8)
+    slope_deviation = get_slope_deviation(sorted_data)
     
-    # Return both the price direction and EMA slope with direction as a string
-    return f"price_direction: {price_direction}, ema_slope: {ema_slope}, ema_direction: {ema_direction}"
+    # Return price direction, EMA slope, and slope deviation
+    return f"price_direction: {price_direction}, ema_slope: {ema_slope}, slope_deviation: {slope_deviation}"
 
 @app.post('/reset')
 async def reset():
