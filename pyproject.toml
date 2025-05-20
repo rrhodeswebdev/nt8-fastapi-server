@@ -1,0 +1,22 @@
+[project]
+name = "nt8-data-analysis"
+version = "0.1.0"
+description = ""
+authors = [
+    {name = "Ryan Rhodes",email = "ryan@ryanrhodes.io"}
+]
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi[standard] (>=0.115.12,<0.116.0)",
+    "pandas (>=2.2.3,<3.0.0)",
+    "ta (>=0.11.0,<0.12.0)"
+]
+
+[tool.poetry]
+packages = [{include = "nt8_data_analysis", from = "src"}]
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
