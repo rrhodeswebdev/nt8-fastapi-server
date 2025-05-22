@@ -273,6 +273,21 @@ socks = ["socksio (==1.*)"]
 zstd = ["zstandard (>=0.18.0)"]
 
 [[package]]
+name = "hurst"
+version = "0.0.5"
+description = "Hurst exponent evaluation and R/S-analysis"
+optional = false
+python-versions = "*"
+groups = ["main"]
+files = [
+    {file = "hurst-0.0.5-py3-none-any.whl", hash = "sha256:d163f11fe2318aa8979c921d6667b8dfd6205c629924fefbed68505357cf995e"},
+]
+
+[package.dependencies]
+numpy = ">=1.10"
+pandas = ">=0.18"
+
+[[package]]
 name = "idna"
 version = "3.10"
 description = "Internationalized Domain Names in Applications (IDNA)"
@@ -1234,4 +1249,4 @@ files = [
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.13"
-content-hash = "d67bd51ab5dafad44afe30a5fe472e3547236965c8bbd4a44ee26fe972fa69b1"
+content-hash = "04ac894878b76bb255567b38357f878cba08df15789cc71c906c907d3b0b7106"

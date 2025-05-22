@@ -4,6 +4,7 @@ from typing import List
 import pandas as pd
 from ta.trend import EMAIndicator
 import math
+from hurst import compute_Hc
 
 app = FastAPI(title="NT8 AI Server")
 
@@ -155,12 +156,33 @@ def get_slope_deviation(data_list: pd.DataFrame) -> float:
     # Get the most recent slope deviation
     return data_list["slope_deviation"].iloc[0]
 
+def calculate_hurst_exponent(data_list: pd.DataFrame) -> float:
+    """
+    Calculate the Hurst Exponent for the given price data.
+    Returns:
+        float: The Hurst Exponent value.
+    """
+    if len(data_list) < 2:
+        return 0.0
+    
+    # Get the price data
+    price_data = data_list["close"].values
+    
+    # Calculate the Hurst Exponent
+    H, c, data = compute_Hc(price_data, kind="price")
+    
+    return H
+
+
 @app.post("/")
 async def process_string(request: Request):
     """
-    Process a string and return the result.
+    Process price data and return trading signals based on slope deviation changes.
     
-    This endpoint takes a string and returns it in uppercase.
+    Returns:
+        - "buy" if slope deviation increases by 50% or more
+        - "sell" if slope deviation decreases by 50% or more
+        - Price direction, EMA slope, and slope deviation info otherwise
     """
     # Get the raw bytes from the request body
     raw_data = await request.body()
@@ -177,9 +199,28 @@ async def process_string(request: Request):
     price_direction = determine_price_direction(sorted_data)
     ema_slope, ema_direction = calculate_ema_slope(sorted_data, period=8)
     slope_deviation = get_slope_deviation(sorted_data)
+    hurst_exponent = calculate_hurst_exponent(sorted_data)
+    # Check for significant changes in slope deviation if we have enough data
+    if 'slope_deviation' in sorted_data.columns and len(sorted_data) >= 2:
+        current_deviation = sorted_data['slope_deviation'].iloc[0]
+        previous_deviation = sorted_data['slope_deviation'].iloc[1]
+        
+        # Only proceed if both values are valid
+        if pd.notnull(current_deviation) and pd.notnull(previous_deviation) and previous_deviation > 0:
+            # Calculate percentage change
+            percentage_change = ((current_deviation - previous_deviation) / previous_deviation) * 100
+            
+            # Debug info
+            print(f"Slope deviation: current={current_deviation}, previous={previous_deviation}, change={percentage_change}%")
+            
+            # Return signals based on percentage change
+            if percentage_change >= 50:
+                return "buy"
+            elif percentage_change <= -50:
+                return "sell"
     
-    # Return price direction, EMA slope, and slope deviation
-    return f"price_direction: {price_direction}, ema_slope: {ema_slope}, slope_deviation: {slope_deviation}"
+    # Return the default response if no signal was triggered
+    return f"price_direction: {price_direction}, ema_slope: {ema_slope}, slope_deviation: {slope_deviation}, hurst_exponent: {hurst_exponent}"
 
 @app.post('/reset')
 async def reset():
