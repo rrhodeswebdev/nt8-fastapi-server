@@ -159,14 +159,19 @@ def get_slope_deviation(data_list: pd.DataFrame) -> float:
 def calculate_hurst_exponent(data_list: pd.DataFrame) -> float:
     """
     Calculate the Hurst Exponent for the given price data.
+    Uses only the most recent 100 rows of data for the calculation.
+    
     Returns:
         float: The Hurst Exponent value.
     """
     if len(data_list) < 2:
         return 0.0
     
-    # Get the price data
-    price_data = data_list["close"].values
+    # Get the most recent 100 rows (or all rows if less than 100)
+    recent_data = data_list.head(100)
+    
+    # Get the price data from the recent data
+    price_data = recent_data["close"].values
     
     # Calculate the Hurst Exponent
     H, c, data = compute_Hc(price_data, kind="price")
