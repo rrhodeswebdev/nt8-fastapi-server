@@ -27,6 +27,19 @@ class PriceData(BaseModel):
 data_list = pd.DataFrame(columns=["time", "open", "high", "low", "close", "volume"])
 
 def process_data(data: str) -> None:
+    # Check if the data contains tabs (tab-delimited)
+    if '\t' in data:
+        # Split on tabs and process each comma-delimited string
+        tab_separated_strings = data.split('\t')
+        for single_data_string in tab_separated_strings:
+            # Process each individual comma-delimited string
+            if single_data_string.strip():  # Only process non-empty strings
+                process_single_data_string(single_data_string.strip())
+    else:
+        # Process as a single comma-delimited string
+        process_single_data_string(data)
+
+def process_single_data_string(data: str) -> None:
     [time, open_val, high, low, close, volume] = data.split(",")
     # Convert string values to appropriate types immediately
     price_data = {
