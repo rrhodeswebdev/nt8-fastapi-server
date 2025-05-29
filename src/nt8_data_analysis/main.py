@@ -34,10 +34,6 @@ async def process_string(request: Request):
     # Decode bytes to string
     processed_string = raw_data.decode('utf-8')
 
-    print("_________PROCESSED__________")
-    print(processed_string)
-    print("____________________________")
-
     if processed_string == "test":
         return TEST_RESPONSE
 

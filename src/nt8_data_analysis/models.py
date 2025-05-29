@@ -46,5 +46,5 @@ class AnalysisResult(NamedTuple):
     ema_slope: float
     ema_direction: str
     slope_deviation: float
-    hurst_exponent: float
+    hurst_exponent: str
     trading_signal: Optional[str]

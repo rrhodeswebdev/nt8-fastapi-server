@@ -158,13 +158,13 @@ def add_price_data_to_state(price_data: PriceData, state: MarketState) -> Market
 
     # Add to data list and sort chronologically to maintain proper order
     new_data = state.data + [enriched_data]
-    
+
     # Sort chronologically (oldest to newest)
     times = [item.price_data.time for item in new_data]
     time_series = pd.to_datetime(times)
     sorted_indices = time_series.argsort()
     sorted_data = [new_data[i] for i in sorted_indices]
-    
+
     new_time_cache = state.time_cache | {price_data.time}
 
     # Trim if necessary - keep the most recent entries
@@ -192,7 +192,7 @@ def process_multiple_price_data(price_data_list: List[PriceData], state: MarketS
     # For large datasets (likely historical data), use optimized batch processing
     if len(price_data_list) > 10:
         return process_batch_price_data(price_data_list, state)
-    
+
     # For real-time data (small batches), process incrementally
     return reduce(
         lambda current_state, price_data: add_price_data_to_state(price_data, current_state),
@@ -208,14 +208,14 @@ def process_batch_price_data(price_data_list: List[PriceData], state: MarketStat
     """
     if not price_data_list:
         return state
-    
+
     if VERBOSE_LOGGING:
         print(f"📊 Processing batch of {len(price_data_list)} historical data entries")
-    
+
     # Filter out duplicates and convert to enriched data
     enriched_batch = []
     new_times = set()
-    
+
     for price_data in price_data_list:
         if not is_data_already_present(price_data.time, state.time_cache):
             enriched_data = EnrichedPriceData(
@@ -224,21 +224,21 @@ def process_batch_price_data(price_data_list: List[PriceData], state: MarketStat
             )
             enriched_batch.append(enriched_data)
             new_times.add(price_data.time)
-    
+
     if not enriched_batch:
         if VERBOSE_LOGGING:
             print("⚠️  All batch data already present, no new data added")
         return state
-    
+
     # Combine with existing data
     combined_data = state.data + enriched_batch
-    
+
     # Sort chronologically (oldest to newest) and trim to max_entries from the most recent end
     times = [item.price_data.time for item in combined_data]
     time_series = pd.to_datetime(times)
     sorted_indices = time_series.argsort()
     sorted_data = [combined_data[i] for i in sorted_indices]
-    
+
     # Keep only the most recent entries
     if len(sorted_data) > state.max_entries:
         trimmed_data = sorted_data[-state.max_entries:]
@@ -249,16 +249,16 @@ def process_batch_price_data(price_data_list: List[PriceData], state: MarketStat
             print(f"📅 Data range: {oldest_time} to {newest_time}")
     else:
         trimmed_data = sorted_data
-    
+
     # Update time cache with remaining entries
     new_time_cache = frozenset(item.price_data.time for item in trimmed_data)
-    
+
     if VERBOSE_LOGGING:
         print(f"✅ Batch processed: {len(enriched_batch)} new entries added, {len(trimmed_data)} total entries")
-    
+
     # Print raw data after batch addition (single summary)
     print_dataframe_summary(trimmed_data, f"Historical Market Data Loaded ({len(trimmed_data)} entries)")
-    
+
     return MarketState(
         data=trimmed_data,
         time_cache=new_time_cache,
@@ -351,13 +351,13 @@ def calculate_hurst_exponent_for_data(close_prices: List[float], window: int = H
     if len(close_prices) < 100:
         return 0.0
 
-    # Use the most recent data points
-    recent_prices = close_prices[-min(window, len(close_prices)):]
+    # Use the most recent 100 data points
+    recent_prices = close_prices[-100:]
 
     try:
         H, c, data = compute_Hc(recent_prices, kind="price", simplified=True)
         if 0 <= H <= 1:
-            return round(H, 4)
+            return round(H, 2)
         else:
             logging.warning(f"Hurst exponent {H} out of valid range [0,1]")
             return 0.0
@@ -438,6 +438,25 @@ def determine_price_direction(data: List[EnrichedPriceData]) -> str:
     else:
         return "neutral"
 
+def determine_market_structure(data: List[EnrichedPriceData]) -> str:
+    """Determine structure based on hurst exponent."""
+    if len(data) < 100:
+        return "not enough data"
+
+    # Get the most recent Hurst exponent from the latest data point
+    sorted_data = sort_data_chronologically(data, ascending=False)  # Most recent first
+    hurst_exponent = sorted_data[0].indicators.hurst_exponent
+
+    if hurst_exponent > 0.6:
+        return "trending"
+    elif hurst_exponent < 0.4:
+        return "ranging"
+    elif hurst_exponent > 0.5 and hurst_exponent <= 0.6:
+        return "weak trend"
+    elif hurst_exponent >= 0.4 and hurst_exponent <= 0.5:
+        return "weak ranging"
+    else:
+        return "random-walk"
 
 def get_most_recent_indicators(data: List[EnrichedPriceData]) -> Optional[TechnicalIndicators]:
     """Get the most recent technical indicators."""
@@ -483,12 +502,12 @@ def check_trading_signals(indicators: TechnicalIndicators) -> Optional[str]:
     logging.info(f"Signal Check - EMA Slope: {ema_slope}, Slope Deviation: {slope_deviation}, Hurst Exponent: {hurst_exponent}")
 
     # Check for BUY signal: ema_slope > 50, slope_deviation > 50, hurst_exponent > 50
-    if ema_slope > 50 and slope_deviation > 50 and hurst_exponent > 50:
+    if ema_slope > 35 and slope_deviation > 25 and hurst_exponent > 0.50:
         logging.info("BUY signal generated!")
         return "buy"
 
     # Check for SELL signal: ema_slope < -50, slope_deviation > 50, hurst_exponent > 50
-    elif ema_slope < -50 and slope_deviation > 50 and hurst_exponent > 50:
+    elif ema_slope < -35 and slope_deviation > 25 and hurst_exponent > 0.50:
         logging.info("SELL signal generated!")
         return "sell"
 
@@ -505,7 +524,7 @@ def analyze_market_state(state: MarketState) -> AnalysisResult:
             ema_slope=0.0,
             ema_direction="not enough data",
             slope_deviation=0.0,
-            hurst_exponent=0.0,
+            hurst_exponent="not enough data",
             trading_signal=None
         )
 
@@ -514,7 +533,7 @@ def analyze_market_state(state: MarketState) -> AnalysisResult:
 
     indicators = get_most_recent_indicators(state.data)
     slope_deviation = indicators.slope_deviation if indicators else 0.0
-    hurst_exponent = indicators.hurst_exponent if indicators else 0.0
+    hurst_exponent = determine_market_structure(state.data)
     trading_signal = check_trading_signals(indicators) if indicators else None
 
     # Print analysis summary
@@ -523,7 +542,7 @@ def analyze_market_state(state: MarketState) -> AnalysisResult:
         print(f"   Price Direction: {price_direction}")
         print(f"   EMA Slope: {ema_slope:.4f}° ({ema_direction})")
         print(f"   Slope Deviation: {slope_deviation:.2f}")
-        print(f"   Hurst Exponent: {hurst_exponent:.4f}")
+        print(f"   Hurst Exponent: {hurst_exponent}")
         if trading_signal:
             print(f"   🚨 TRADING SIGNAL: {trading_signal.upper()}")
         else:
