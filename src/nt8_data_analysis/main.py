@@ -1,14 +1,19 @@
 from fastapi import FastAPI, Request
-from .data_processor import DataProcessor
+from .functional_processor import (
+    create_initial_market_state,
+    create_data_processing_pipeline,
+    get_analysis_response_string
+)
 from .config import (
     API_TITLE, TEST_RESPONSE, RESET_RESPONSE, HEALTH_CHECK_RESPONSE,
-    MAX_DATA_ENTRIES, EMA_WINDOW
+    MAX_DATA_ENTRIES
 )
 
 app = FastAPI(title=API_TITLE)
 
-# Initialize the data processor
-data_processor = DataProcessor(max_entries=MAX_DATA_ENTRIES)
+# Initialize market state and processing pipeline using functional approach
+market_state = create_initial_market_state(max_entries=MAX_DATA_ENTRIES)
+process_data = create_data_processing_pipeline(time_period=1)
 
 
 @app.post("/")
@@ -21,37 +26,33 @@ async def process_string(request: Request):
         - "sell" if slope deviation decreases by 50% or more
         - Price direction, EMA slope, and slope deviation info otherwise
     """
+    global market_state
+
     # Get the raw bytes from the request body
     raw_data = await request.body()
 
     # Decode bytes to string
     processed_string = raw_data.decode('utf-8')
 
+    print("_________PROCESSED__________")
+    print(processed_string)
+    print("____________________________")
+
     if processed_string == "test":
         return TEST_RESPONSE
 
-    # Process the string data
-    data_processor.process_data(processed_string)
+    # Process the string data using functional pipeline
+    market_state, analysis = process_data(processed_string, market_state)
 
-    # Get analysis results
-    price_direction = data_processor.determine_price_direction()
-    ema_slope, ema_direction = data_processor.calculate_ema_slope(period=EMA_WINDOW)
-    slope_deviation = data_processor.get_slope_deviation()
-    hurst_exponent = data_processor.calculate_hurst_exponent()
-
-    # Check for trading signals
-    signal = data_processor.check_trading_signals()
-    if signal:
-        return signal
-
-    # Return the default response if no signal was triggered
-    return f"price_direction: {price_direction}, ema_slope: {ema_slope}, slope_deviation: {slope_deviation}, hurst_exponent: {hurst_exponent}"
+    # Return response based on analysis
+    return get_analysis_response_string(analysis)
 
 
 @app.post('/reset')
 async def reset():
     """Reset all stored price data."""
-    data_processor.reset()
+    global market_state
+    market_state = create_initial_market_state(max_entries=MAX_DATA_ENTRIES)
     return RESET_RESPONSE
 
 
