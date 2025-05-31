@@ -18,7 +18,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 # Utility function for DataFrame creation and printing
 def create_dataframe_from_enriched_data(data: List[EnrichedPriceData]) -> pd.DataFrame:
-    """Create a pandas DataFrame from enriched price data for display purposes."""
+    """Create a pandas DataFrame from enriched price data."""
     if not data:
         return pd.DataFrame()
 
@@ -35,6 +35,7 @@ def create_dataframe_from_enriched_data(data: List[EnrichedPriceData]) -> pd.Dat
             'close': item.price_data.close,
             'volume': item.price_data.volume,
             'ema_8': item.indicators.ema_8,
+            'ema_200': item.indicators.ema_200,
             'ema_slope': item.indicators.ema_slope,
             'slope_deviation': item.indicators.slope_deviation,
             'hurst_exponent': item.indicators.hurst_exponent
@@ -56,31 +57,6 @@ def print_dataframe_summary(data: List[EnrichedPriceData], title: str = "Market 
             print(f"\n{title}: No data available")
         return
 
-    if COMPACT_DATAFRAME_DISPLAY:
-        # Compact display - just show most recent entry
-        latest = df.iloc[0]
-        signal = "YES" if latest['ema_slope'] > 50 or latest['ema_slope'] < -50 else "NO"
-        print(f"\n📊 {title} [{len(df)} entries] - Latest: {latest['time']} | "
-              f"Close: {latest['close']:.2f} | EMA: {latest['ema_8']:.4f if pd.notna(latest['ema_8']) else 'N/A'} | "
-              f"Slope: {latest['ema_slope']:.2f}° | Signal: {signal}")
-        return
-
-    print(f"\n{title} - {len(df)} entries (most recent first):")
-    print("=" * 80)
-
-    # Determine how many rows to show
-    max_rows = MAX_DATAFRAME_ROWS if MAX_DATAFRAME_ROWS > 0 else len(df)
-
-    if len(df) <= max_rows:
-        print(df.to_string(index=False, float_format='%.4f'))
-    else:
-        rows_to_show = max_rows // 2
-        print(f"First {rows_to_show} entries:")
-        print(df.head(rows_to_show).to_string(index=False, float_format='%.4f'))
-        print(f"\n... (showing first {rows_to_show} and last {rows_to_show} of {len(df)} entries) ...")
-        print(f"\nLast {rows_to_show} entries:")
-        print(df.tail(rows_to_show).to_string(index=False, float_format='%.4f'))
-
     # Print summary statistics for the most recent entry
     if len(df) > 0:
         latest = df.iloc[0]
@@ -89,6 +65,8 @@ def print_dataframe_summary(data: List[EnrichedPriceData], title: str = "Market 
         print(f"  Price: {latest['close']:.2f} (O:{latest['open']:.2f} H:{latest['high']:.2f} L:{latest['low']:.2f})")
         if pd.notna(latest['ema_8']):
             print(f"  EMA(8): {latest['ema_8']:.4f}")
+        if pd.notna(latest['ema_200']):
+            print(f"  EMA(200): {latest['ema_200']:.4f}")
         print(f"  EMA Slope: {latest['ema_slope']:.4f}°")
         print(f"  Slope Deviation: {latest['slope_deviation']:.2f}")
         print(f"  Hurst Exponent: {latest['hurst_exponent']:.4f}")
@@ -290,7 +268,7 @@ def sort_data_chronologically(data: List[EnrichedPriceData], ascending: bool = T
 
 
 # Pure functions for technical indicator calculations
-def calculate_ema_values(data: List[EnrichedPriceData], window: int = EMA_WINDOW) -> List[float]:
+def calculate_ema_values(data: List[EnrichedPriceData], window: int) -> List[float]:
     """Calculate EMA values for chronologically sorted data."""
     if len(data) < window:
         return [np.nan] * len(data)
@@ -376,8 +354,9 @@ def update_indicators_for_data(data: List[EnrichedPriceData], time_period: int =
     close_prices = [item.price_data.close for item in sorted_data]
 
     # Calculate all indicators
-    ema_values = calculate_ema_values(sorted_data)
-    slopes = calculate_slopes_from_ema(ema_values, close_prices, time_period)
+    ema_8_values = calculate_ema_values(sorted_data, EMA_WINDOW)
+    ema_200_values = calculate_ema_values(sorted_data, 200)
+    slopes = calculate_slopes_from_ema(ema_8_values, close_prices, time_period)
     slope_deviations = calculate_slope_deviations(slopes)
 
     # Calculate Hurst exponent only for the most recent point
@@ -390,7 +369,8 @@ def update_indicators_for_data(data: List[EnrichedPriceData], time_period: int =
         hurst_value = hurst_exponent if i == len(sorted_data) - 1 else item.indicators.hurst_exponent
 
         new_indicators = TechnicalIndicators(
-            ema_8=ema_values[i] if not pd.isna(ema_values[i]) else None,
+            ema_8=ema_8_values[i] if not pd.isna(ema_8_values[i]) else None,
+            ema_200=ema_200_values[i] if not pd.isna(ema_200_values[i]) else None,
             ema_slope=slopes[i],
             slope_deviation=slope_deviations[i],
             hurst_exponent=hurst_value
@@ -488,26 +468,33 @@ def calculate_ema_slope_and_direction(data: List[EnrichedPriceData], period: int
     return slope_degrees, direction
 
 
-def check_trading_signals(indicators: TechnicalIndicators) -> Optional[str]:
-    """Check for buy/sell signals based on threshold criteria."""
+def check_trading_signals(indicators: TechnicalIndicators, current_price: float) -> Optional[str]:
+    """Check for buy/sell signals based on threshold criteria and 200 EMA filter."""
     ema_slope = indicators.ema_slope
     slope_deviation = indicators.slope_deviation
     hurst_exponent = indicators.hurst_exponent
+    ema_200 = indicators.ema_200
 
     # Ensure all values are valid numbers
-    if pd.isna(ema_slope) or pd.isna(slope_deviation) or pd.isna(hurst_exponent):
+    if pd.isna(ema_slope) or pd.isna(slope_deviation) or pd.isna(hurst_exponent) or pd.isna(ema_200):
         return None
 
     # Log current indicator values for signal checking
-    logging.info(f"Signal Check - EMA Slope: {ema_slope}, Slope Deviation: {slope_deviation}, Hurst Exponent: {hurst_exponent}")
+    logging.info(f"Signal Check - EMA Slope: {ema_slope}, Slope Deviation: {slope_deviation}, "
+                f"Hurst Exponent: {hurst_exponent}, EMA 200: {ema_200}, Price: {current_price}")
 
-    # Check for BUY signal: ema_slope > 50, slope_deviation > 50, hurst_exponent > 50
-    if ema_slope > 35 and slope_deviation > 25 and hurst_exponent > 0.50:
+    # Check if price is above or below 200 EMA
+    price_above_ema200 = current_price > ema_200
+    
+    # Check for BUY signal: ema_slope > 35, slope_deviation > 25, hurst_exponent > 0.50
+    # Only valid if price is above 200 EMA
+    if ema_slope > 35 and slope_deviation > 25 and hurst_exponent > 0.50 and price_above_ema200:
         logging.info("BUY signal generated!")
         return "buy"
 
-    # Check for SELL signal: ema_slope < -50, slope_deviation > 50, hurst_exponent > 50
-    elif ema_slope < -35 and slope_deviation > 25 and hurst_exponent > 0.50:
+    # Check for SELL signal: ema_slope < -35, slope_deviation > 25, hurst_exponent > 0.50
+    # Only valid if price is below 200 EMA
+    elif ema_slope < -35 and slope_deviation > 25 and hurst_exponent > 0.50 and not price_above_ema200:
         logging.info("SELL signal generated!")
         return "sell"
 
@@ -531,10 +518,18 @@ def analyze_market_state(state: MarketState) -> AnalysisResult:
     price_direction = determine_price_direction(state.data)
     ema_slope, ema_direction = calculate_ema_slope_and_direction(state.data)
 
+    # Get most recent data point
+    sorted_data = sort_data_chronologically(state.data, ascending=False)
+    latest_data = sorted_data[0]
+    current_price = latest_data.price_data.close
+    
     indicators = get_most_recent_indicators(state.data)
     slope_deviation = indicators.slope_deviation if indicators else 0.0
     hurst_exponent = determine_market_structure(state.data)
-    trading_signal = check_trading_signals(indicators) if indicators else None
+    trading_signal = None
+    
+    if indicators and not pd.isna(indicators.ema_200):
+        trading_signal = check_trading_signals(indicators, current_price)
 
     # Print analysis summary
     if VERBOSE_LOGGING:
@@ -543,6 +538,10 @@ def analyze_market_state(state: MarketState) -> AnalysisResult:
         print(f"   EMA Slope: {ema_slope:.4f}° ({ema_direction})")
         print(f"   Slope Deviation: {slope_deviation:.2f}")
         print(f"   Hurst Exponent: {hurst_exponent}")
+        if indicators and not pd.isna(indicators.ema_200):
+            print(f"   Price vs EMA200: {'Above' if current_price > indicators.ema_200 else 'Below'} ({current_price:.2f} vs {indicators.ema_200:.2f})")
+        else:
+            print(f"   EMA200: Not available yet")
         if trading_signal:
             print(f"   🚨 TRADING SIGNAL: {trading_signal.upper()}")
         else:

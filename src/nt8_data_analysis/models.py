@@ -24,6 +24,7 @@ class PriceData:
 @dataclass(frozen=True)
 class TechnicalIndicators:
     ema_8: Optional[float] = None
+    ema_200: Optional[float] = None
     ema_slope: float = 0.0
     slope_deviation: float = 0.0
     hurst_exponent: float = 0.0
@@ -41,7 +42,8 @@ class MarketState(NamedTuple):
     max_entries: int
 
 
-class AnalysisResult(NamedTuple):
+@dataclass(frozen=True)
+class AnalysisResult:
     price_direction: str
     ema_slope: float
     ema_direction: str
