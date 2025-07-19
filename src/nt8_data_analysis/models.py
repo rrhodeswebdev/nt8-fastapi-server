@@ -1,4 +1,4 @@
-from typing import NamedTuple, List, Optional
+from typing import NamedTuple, List, Optional, FrozenSet
 from dataclasses import dataclass
 
 
@@ -38,7 +38,7 @@ class EnrichedPriceData:
 
 class MarketState(NamedTuple):
     data: List[EnrichedPriceData]
-    time_cache: frozenset[str]
+    time_cache: FrozenSet[str]
     max_entries: int
 
 
